@@ -1,0 +1,62 @@
+{
+  "plan": {
+    "tasks": [
+      {
+        "tool": "code_search",
+        "args": {
+          "query": "FastAPI SQLite"
+        }
+      },
+      {
+        "tool": "file_write",
+        "args": {
+          "path": "app/db.py",
+          "content": "import sqlite3, secrets, string\nfrom pathlib import Path\n\nDB_PATH = Path(\"urls.db\")\n\ndef gen():\n    return ''.join(secrets.choice(string.ascii_letters+string.digits) for _ in range(6))\n\ndef init_db():\n    conn=sqlite3.connect(DB_PATH)\n    conn.execute(\"CREATE TABLE IF NOT EXISTS urls (id INTEGER PRIMARY KEY, original_url TEXT, short_code TEXT UNIQUE, clicks INTEGER DEFAULT 0)\")\n    conn.commit()\n    conn.close()\n\ndef create_url(u,c):\n    conn=sqlite3.connect(DB_PATH)\n    try:\n        conn.execute(\"INSERT INTO urls (original_url, short_code) VALUES (?,?)\",(u,c))\n        conn.commit()\n        return c\n    except:\n        return None\n    finally:\n        conn.close()\n\ndef get_url(c):\n    conn=sqlite3.connect(DB_PATH)\n    cur=conn.execute(\"SELECT original_url FROM urls WHERE short_code=?\",(c,))\n    r=cur.fetchone()\n    if r:\n        conn.execute(\"UPDATE urls SET clicks=clicks+1 WHERE short_code=?\",(c,))\n        conn.commit()\n    conn.close()\n    return r[0] if r else None\n\ndef get_analytics_by_code(c):\n    conn=sqlite3.connect(DB_PATH)\n    cur=conn.execute(\"SELECT short_code, original_url, clicks FROM urls WHERE short_code=?\",(c,))\n    r=cur.fetchone()\n    conn.close()\n    return {\"code\":r[0],\"url\":r[1],\"clicks\":r[2]} if r else None",
+          "evidence": [
+            "sqlite docs"
+          ]
+        }
+      },
+      {
+        "tool": "file_write",
+        "args": {
+          "path": "app/__init__.py",
+          "content": ""
+        }
+      },
+      {
+        "tool": "file_write",
+        "args": {
+          "path": "app/main.py",
+          "content": "from fastapi import FastAPI, HTTPException\nfrom fastapi.responses import RedirectResponse\nfrom pydantic import BaseModel, HttpUrl\nfrom contextlib import asynccontextmanager\nfrom app.db import init_db, create_url, get_url, get_analytics_by_code, gen\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    init_db()\n    yield\n\napp=FastAPI(lifespan=lifespan)\n\nclass URLRequest(BaseModel):\n    url: HttpUrl\n    custom_alias: str=None\n\nclass AnalyticsItem(BaseModel):\n    code: str\n    url: str\n    clicks: int\n\n@app.get(\"/health\")\ndef health():\n    return {\"ok\":True}\n\n@app.post(\"/shorten\")\ndef shorten(req: URLRequest):\n    code=req.custom_alias or gen()\n    if len(code)>10:\n        raise HTTPException(400,\"Too long\")\n    if not create_url(str(req.url),code):\n        raise HTTPException(409,\"Exists\")\n    return {\"short_url\":f\"/{code}\"}\n\n@app.get(\"/{code}\")\ndef redirect(code: str):\n    url=get_url(code)\n    if not url:\n        raise HTTPException(404)\n    return RedirectResponse(url)\n\n@app.get(\"/analytics/{code}\", response_model=AnalyticsItem)\ndef analytics(code: str):\n    d=get_analytics_by_code(code)\n    if not d:\n        raise HTTPException(404)\n    return d"
+        }
+      },
+      {
+        "tool": "file_write",
+        "args": {
+          "path": "tests/test_api.py",
+          "content": "import sys, os\nsys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))\n\nfrom fastapi.testclient import TestClient\nfrom app.main import app\nc=TestClient(app)\n\ndef test_health():\n    assert c.get(\"/health\").status_code==200\n\ndef test_shorten():\n    r = c.post(\"/shorten\", json={\"url\": \"https://google.com\"})\n    assert r.status_code == 200\n    assert \"short_url\" in r.json()\n"
+        }
+      },
+      {
+        "tool": "test_runner",
+        "args": {}
+      }
+    ],
+    "risks": [],
+    "mitigations": [
+      "Use Postgres + UUID later"
+    ],
+    "needs_clarification": false
+  },
+  "artifacts_generated": [
+    "app/db.py",
+    "app/__init__.py",
+    "app/main.py",
+    "tests/test_api.py"
+  ],
+  "risks": [],
+  "mitigations": [
+    "Use Postgres + UUID later"
+  ]
+}
